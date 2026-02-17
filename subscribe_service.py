@@ -2,8 +2,20 @@
 订阅服务 - 业务逻辑层
 组合 MPClient 提供高层业务功能
 """
-from typing import Optional
+from typing import Optional, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from mp_client import MPClient
+
+# 语言代码映射（方便用中文查询）
+LANGUAGE_MAP = {
+    "韩语": "ko", "韩": "ko", "korean": "ko", "ko": "ko",
+    "日语": "ja", "日": "ja", "japanese": "ja", "ja": "ja",
+    "中文": "zh", "中": "zh", "chinese": "zh", "zh": "zh",
+    "英语": "en", "英": "en", "english": "en", "en": "en",
+    "法语": "fr", "法": "fr", "french": "fr", "fr": "fr",
+    "西班牙语": "es", "spanish": "es", "es": "es",
+    "泰语": "th", "泰": "th", "thai": "th", "th": "th",
+}
 
 
 class SubscribeService:
@@ -12,33 +24,115 @@ class SubscribeService:
     def __init__(self, client: MPClient = None):
         self.client = client or MPClient()
 
+    # ==================== 语言查询辅助 ====================
+
+    def _get_language_for_item(self, item: dict) -> str:
+        """查询单个条目的 original_language（通过 TMDB 详情）"""
+        tmdb_id = item.get("tmdb_id")
+        media_type = item.get("type", "电视剧")
+        if not tmdb_id:
+            return ""
+        try:
+            detail = self.client.get_media_detail(
+                f"tmdb:{tmdb_id}", type_name=media_type
+            )
+            return detail.get("original_language", "") if detail else ""
+        except Exception:
+            return ""
+
+    def _enrich_and_filter_by_lang(self, items: list, lang: str,
+                                    target_count: int) -> list:
+        """批量查询语言并过滤
+
+        Args:
+            items: 原始列表
+            lang: 语言代码 (ko/ja/zh/en...) 或中文名
+            target_count: 目标返回数量
+        """
+        # 解析语言代码
+        lang_code = LANGUAGE_MAP.get(lang.lower(), lang.lower())
+
+        results = []
+
+        # 并发查询 TMDB 详情获取语言
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_item = {
+                executor.submit(self._get_language_for_item, item): item
+                for item in items
+            }
+            for future in as_completed(future_to_item):
+                item = future_to_item[future]
+                try:
+                    item_lang = future.result()
+                    item["_original_language"] = item_lang
+                    if item_lang == lang_code:
+                        results.append(item)
+                        if len(results) >= target_count:
+                            # 取消剩余任务
+                            for f in future_to_item:
+                                f.cancel()
+                            break
+                except Exception:
+                    pass
+
+        return results
+
     # ==================== 热播内容 ====================
 
     def get_hot_tv(self, page: int = 1, count: int = 20,
-                   genre_id: int = None, min_rating: float = None) -> list:
-        """获取热播电视剧"""
+                   genre_id: int = None, min_rating: float = None,
+                   lang: str = None) -> list:
+        """获取热播电视剧
+
+        Args:
+            lang: 可选，语言过滤。支持代码(ko/ja/zh/en)或中文(韩语/日语)
+        """
         kwargs = {}
         if genre_id is not None:
             kwargs["genre_id"] = genre_id
         if min_rating is not None:
             kwargs["min_rating"] = min_rating
-        shows = self.client.get_popular_subscribes(
-            stype="电视剧", page=page, count=count, **kwargs
-        )
-        return [self._format_media(item) for item in shows]
+
+        if lang:
+            # 开启语言过滤：拉取更多数据再过滤
+            fetch_count = count * 5  # 多拉取以保证过滤后够用
+            shows = self.client.get_popular_subscribes(
+                stype="电视剧", page=page, count=fetch_count, **kwargs
+            )
+            filtered = self._enrich_and_filter_by_lang(shows, lang, count)
+            return [self._format_media(item) for item in filtered]
+        else:
+            shows = self.client.get_popular_subscribes(
+                stype="电视剧", page=page, count=count, **kwargs
+            )
+            return [self._format_media(item) for item in shows]
 
     def get_hot_movies(self, page: int = 1, count: int = 20,
-                       genre_id: int = None, min_rating: float = None) -> list:
-        """获取热播电影"""
+                       genre_id: int = None, min_rating: float = None,
+                       lang: str = None) -> list:
+        """获取热播电影
+
+        Args:
+            lang: 可选，语言过滤。支持代码(ko/ja/zh/en)或中文(韩语/日语)
+        """
         kwargs = {}
         if genre_id is not None:
             kwargs["genre_id"] = genre_id
         if min_rating is not None:
             kwargs["min_rating"] = min_rating
-        movies = self.client.get_popular_subscribes(
-            stype="电影", page=page, count=count, **kwargs
-        )
-        return [self._format_media(item) for item in movies]
+
+        if lang:
+            fetch_count = count * 5
+            movies = self.client.get_popular_subscribes(
+                stype="电影", page=page, count=fetch_count, **kwargs
+            )
+            filtered = self._enrich_and_filter_by_lang(movies, lang, count)
+            return [self._format_media(item) for item in filtered]
+        else:
+            movies = self.client.get_popular_subscribes(
+                stype="电影", page=page, count=count, **kwargs
+            )
+            return [self._format_media(item) for item in movies]
 
     # ==================== 订阅管理 ====================
 
@@ -160,6 +254,7 @@ class SubscribeService:
             "type": item.get("type", ""),
             "tmdb_id": item.get("tmdb_id"),
             "douban_id": item.get("douban_id"),
+            "language": item.get("_original_language") or item.get("original_language", ""),
             "rating": item.get("vote_average", 0),
             "overview": item.get("overview", ""),
             "poster": item.get("poster_path", ""),

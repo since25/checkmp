@@ -47,10 +47,11 @@ def hot_tv(
     page: int = Query(1, description="页码"),
     count: int = Query(20, description="每页数量"),
     min_rating: Optional[float] = Query(None, description="最低评分"),
+    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)，也支持中文如'韩语'"),
 ):
-    """获取热播电视剧列表"""
+    """获取热播电视剧列表（支持语言过滤）"""
     try:
-        return service.get_hot_tv(page=page, count=count, min_rating=min_rating)
+        return service.get_hot_tv(page=page, count=count, min_rating=min_rating, lang=lang)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -60,10 +61,11 @@ def hot_movie(
     page: int = Query(1, description="页码"),
     count: int = Query(20, description="每页数量"),
     min_rating: Optional[float] = Query(None, description="最低评分"),
+    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)，也支持中文如'韩语'"),
 ):
-    """获取热播电影列表"""
+    """获取热播电影列表（支持语言过滤）"""
     try:
-        return service.get_hot_movies(page=page, count=count, min_rating=min_rating)
+        return service.get_hot_movies(page=page, count=count, min_rating=min_rating, lang=lang)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
