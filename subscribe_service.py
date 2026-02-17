@@ -5,6 +5,7 @@
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mp_client import MPClient
+from tmdb_client import TMDBClient
 
 # 语言代码映射（方便用中文查询）
 LANGUAGE_MAP = {
@@ -21,8 +22,9 @@ LANGUAGE_MAP = {
 class SubscribeService:
     """订阅服务"""
 
-    def __init__(self, client: MPClient = None):
+    def __init__(self, client: MPClient = None, tmdb: TMDBClient = None):
         self.client = client or MPClient()
+        self.tmdb = tmdb or TMDBClient()
 
     # ==================== 语言查询辅助 ====================
 
@@ -145,31 +147,50 @@ class SubscribeService:
                              season: int = None) -> dict:
         """通过 TMDB ID 订阅
 
+        优先使用 TMDB 原生 API 获取媒体信息（精确可靠），
+        如果 TMDB 不可用则回退到 MoviePilot 搜索。
+
         Args:
             tmdbid: TMDB ID
             media_type: "电影" 或 "电视剧"
             season: 季号（仅电视剧）
         """
-        # 先搜索获取媒体信息
-        results = self.client.search_media(str(tmdbid))
-        media_info = None
-        for r in results:
-            if r.get("tmdb_id") == tmdbid:
-                media_info = r
-                break
-
         sub_data = {
             "tmdbid": tmdbid,
             "type": media_type,
         }
 
-        if media_info:
-            sub_data["name"] = media_info.get("title", "")
-            sub_data["year"] = media_info.get("year", "")
-            sub_data["poster"] = media_info.get("poster_path", "")
-            sub_data["backdrop"] = media_info.get("backdrop_path", "")
-            sub_data["vote"] = media_info.get("vote_average", 0)
-            sub_data["description"] = media_info.get("overview", "")
+        # 优先通过 TMDB 原生 API 获取详情（精确查询，不会丢失）
+        try:
+            if media_type == "电影":
+                detail = self.tmdb.movie_detail(tmdbid)
+            else:
+                detail = self.tmdb.tv_detail(tmdbid)
+
+            if detail:
+                sub_data["name"] = detail.get("title", "")
+                # 从日期中提取年份
+                date_str = detail.get("first_air_date") or detail.get("release_date") or ""
+                sub_data["year"] = date_str[:4] if date_str else ""
+                sub_data["poster"] = detail.get("poster", "")
+                sub_data["backdrop"] = detail.get("backdrop", "")
+                sub_data["vote"] = detail.get("rating", 0)
+                sub_data["description"] = detail.get("overview", "")
+        except Exception:
+            # TMDB 不可用时，回退到 MoviePilot 搜索
+            try:
+                results = self.client.search_media(sub_data.get("name", str(tmdbid)))
+                for r in results:
+                    if r.get("tmdb_id") == tmdbid:
+                        sub_data.setdefault("name", r.get("title", ""))
+                        sub_data.setdefault("year", r.get("year", ""))
+                        sub_data.setdefault("poster", r.get("poster_path", ""))
+                        sub_data.setdefault("backdrop", r.get("backdrop_path", ""))
+                        sub_data.setdefault("vote", r.get("vote_average", 0))
+                        sub_data.setdefault("description", r.get("overview", ""))
+                        break
+            except Exception:
+                pass
 
         if season is not None and media_type == "电视剧":
             sub_data["season"] = season
