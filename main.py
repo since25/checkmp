@@ -10,11 +10,12 @@ import uvicorn
 
 import config
 from subscribe_service import SubscribeService
+from tmdb_client import TMDBClient
 
 app = FastAPI(
     title="CheckMP - MoviePilot 订阅服务",
-    description="MoviePilot API 封装，提供热播剧推荐、订阅管理、媒体搜索等功能",
-    version="1.0.0",
+    description="TMDB 发现 + MoviePilot 订阅，为 OpenClaw 机器人提供热播剧推荐与订阅管理",
+    version="2.0.0",
 )
 
 # 允许跨域
@@ -28,6 +29,7 @@ app.add_middleware(
 
 # 初始化服务
 service = SubscribeService()
+tmdb = TMDBClient()
 
 
 # ==================== 请求模型 ====================
@@ -40,30 +42,114 @@ class SubscribeRequest(BaseModel):
     season: Optional[int] = None
 
 
-# ==================== 热播内容 ====================
+# ==================== TMDB 发现 (核心功能) ====================
 
-@app.get("/api/hot/tv", summary="热播电视剧", tags=["热播推荐"])
+@app.get("/api/tmdb/discover/tv", summary="TMDB 发现电视剧", tags=["TMDB 发现"])
+def tmdb_discover_tv(
+    lang: str = Query("ko", description="语言: ko(韩语)/ja(日语)/zh(中文)/en(英语)"),
+    sort_by: str = Query("popularity.desc", description="排序: popularity.desc / first_air_date.desc / vote_average.desc"),
+    page: int = Query(1, description="页码"),
+    min_rating: Optional[float] = Query(None, description="最低评分"),
+    date_from: Optional[str] = Query(None, description="首播日期起始 (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="首播日期截止 (YYYY-MM-DD)"),
+):
+    """通过 TMDB 发现电视剧（按语言/时间/评分/热度筛选）"""
+    try:
+        return tmdb.discover_tv(
+            lang=lang, sort_by=sort_by, page=page,
+            min_vote_average=min_rating,
+            first_air_date_gte=date_from,
+            first_air_date_lte=date_to,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tmdb/discover/movie", summary="TMDB 发现电影", tags=["TMDB 发现"])
+def tmdb_discover_movie(
+    lang: str = Query("ko", description="语言: ko(韩语)/ja(日语)/zh(中文)/en(英语)"),
+    sort_by: str = Query("popularity.desc", description="排序: popularity.desc / primary_release_date.desc / vote_average.desc"),
+    page: int = Query(1, description="页码"),
+    min_rating: Optional[float] = Query(None, description="最低评分"),
+    date_from: Optional[str] = Query(None, description="上映日期起始 (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="上映日期截止 (YYYY-MM-DD)"),
+):
+    """通过 TMDB 发现电影（按语言/时间/评分/热度筛选）"""
+    try:
+        return tmdb.discover_movie(
+            lang=lang, sort_by=sort_by, page=page,
+            min_vote_average=min_rating,
+            release_date_gte=date_from,
+            release_date_lte=date_to,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tmdb/trending/tv", summary="TMDB 趋势电视剧", tags=["TMDB 发现"])
+def tmdb_trending_tv(
+    time_window: str = Query("week", description="时间窗口: day / week"),
+):
+    """获取全球趋势电视剧"""
+    try:
+        return tmdb.trending_tv(time_window=time_window)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tmdb/trending/movie", summary="TMDB 趋势电影", tags=["TMDB 发现"])
+def tmdb_trending_movie(
+    time_window: str = Query("week", description="时间窗口: day / week"),
+):
+    """获取全球趋势电影"""
+    try:
+        return tmdb.trending_movie(time_window=time_window)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tmdb/tv/{tmdb_id}", summary="TMDB 电视剧详情", tags=["TMDB 发现"])
+def tmdb_tv_detail(tmdb_id: int):
+    """获取电视剧详情（含各季信息）"""
+    try:
+        return tmdb.tv_detail(tmdb_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tmdb/movie/{tmdb_id}", summary="TMDB 电影详情", tags=["TMDB 发现"])
+def tmdb_movie_detail(tmdb_id: int):
+    """获取电影详情"""
+    try:
+        return tmdb.movie_detail(tmdb_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== MP 热播内容 ====================
+
+@app.get("/api/hot/tv", summary="MP 热播电视剧", tags=["MP 热播推荐"])
 def hot_tv(
     page: int = Query(1, description="页码"),
     count: int = Query(20, description="每页数量"),
     min_rating: Optional[float] = Query(None, description="最低评分"),
-    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)，也支持中文如'韩语'"),
+    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)"),
 ):
-    """获取热播电视剧列表（支持语言过滤）"""
+    """获取 MoviePilot 社区热播电视剧列表"""
     try:
         return service.get_hot_tv(page=page, count=count, min_rating=min_rating, lang=lang)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/hot/movie", summary="热播电影", tags=["热播推荐"])
+@app.get("/api/hot/movie", summary="MP 热播电影", tags=["MP 热播推荐"])
 def hot_movie(
     page: int = Query(1, description="页码"),
     count: int = Query(20, description="每页数量"),
     min_rating: Optional[float] = Query(None, description="最低评分"),
-    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)，也支持中文如'韩语'"),
+    lang: Optional[str] = Query(None, description="语言过滤: ko(韩语)/ja(日语)/zh(中文)/en(英语)"),
 ):
-    """获取热播电影列表（支持语言过滤）"""
+    """获取 MoviePilot 社区热播电影列表"""
     try:
         return service.get_hot_movies(page=page, count=count, min_rating=min_rating, lang=lang)
     except Exception as e:
@@ -86,7 +172,7 @@ def add_subscribe(req: SubscribeRequest):
     """新增订阅
 
     支持两种方式：
-    - 通过 tmdb_id 直接订阅
+    - 通过 tmdb_id 直接订阅（推荐：从 TMDB 发现中选择后传入 tmdb_id）
     - 通过 title 搜索后订阅第一个匹配结果
     """
     try:
@@ -162,7 +248,7 @@ def get_stats():
 @app.get("/api/health", summary="健康检查", tags=["系统"])
 def health_check():
     """健康检查"""
-    return {"status": "ok", "service": "checkmp"}
+    return {"status": "ok", "service": "checkmp", "version": "2.0.0"}
 
 
 if __name__ == "__main__":
@@ -172,3 +258,4 @@ if __name__ == "__main__":
         port=config.SERVICE_PORT,
         reload=True,
     )
+

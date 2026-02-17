@@ -7,6 +7,7 @@ import os
 # 默认配置
 BASE_URL = ""
 API_KEY = ""
+TMDB_TOKEN = ""  # TMDB Read Access Token
 
 # 本服务监听端口
 SERVICE_PORT = 8899
@@ -15,7 +16,7 @@ SERVICE_HOST = "0.0.0.0"
 
 def load_config(config_file: str = "config_base.txt"):
     """从配置文件加载配置"""
-    global BASE_URL, API_KEY
+    global BASE_URL, API_KEY, TMDB_TOKEN
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_file)
 
@@ -33,10 +34,13 @@ def load_config(config_file: str = "config_base.txt"):
                         BASE_URL = value.rstrip("/")
                     elif key == "api_key":
                         API_KEY = value
+                    elif key == "tmdb_read_access_token":
+                        TMDB_TOKEN = value
 
     # 环境变量覆盖
     BASE_URL = os.environ.get("MP_BASE_URL", BASE_URL)
     API_KEY = os.environ.get("MP_API_KEY", API_KEY)
+    TMDB_TOKEN = os.environ.get("TMDB_TOKEN", TMDB_TOKEN)
     SERVICE_PORT_ENV = os.environ.get("SERVICE_PORT")
     if SERVICE_PORT_ENV:
         globals()["SERVICE_PORT"] = int(SERVICE_PORT_ENV)
